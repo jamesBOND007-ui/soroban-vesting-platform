@@ -1608,4 +1608,42 @@ mod tests {
         ms.execute(&id);
         assert_eq!(ms.get_proposal(&id).status, ProposalStatus::Executed);
     }
+
+    // ── Issue #71: proposal_count() increments correctly across multiple submits
+
+    /// proposal_count() must equal the number of proposals submitted so far.
+    /// Asserts 0 before any submit, then 1, 2, 3 after successive submits.
+    #[test]
+    fn test_proposal_count_increments() {
+        let (env, contract_id, o1, _o2, _o3) = setup_2of3();
+        let ms = MultisigContractClient::new(&env, &contract_id);
+        let stub_id = env.register(stub_token::StubToken, ());
+
+        // No proposals yet — count must be 0.
+        assert_eq!(ms.proposal_count(), 0u64, "initial proposal_count should be 0");
+
+        // Submit first proposal.
+        ms.submit(
+            &o1,
+            &call_action(&env, &stub_id, symbol_short!("ping")),
+            &String::from_str(&env, "proposal 1"),
+        );
+        assert_eq!(ms.proposal_count(), 1u64, "proposal_count should be 1 after first submit");
+
+        // Submit second proposal.
+        ms.submit(
+            &o1,
+            &call_action(&env, &stub_id, symbol_short!("ping")),
+            &String::from_str(&env, "proposal 2"),
+        );
+        assert_eq!(ms.proposal_count(), 2u64, "proposal_count should be 2 after second submit");
+
+        // Submit third proposal.
+        ms.submit(
+            &o1,
+            &call_action(&env, &stub_id, symbol_short!("ping")),
+            &String::from_str(&env, "proposal 3"),
+        );
+        assert_eq!(ms.proposal_count(), 3u64, "proposal_count should be 3 after third submit");
+    }
 }
