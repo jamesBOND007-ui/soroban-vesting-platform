@@ -372,3 +372,72 @@ the contract until the schedule completes.
 ### `ScheduleStatus`
 
 `Active` | `Revoked` | `Completed`
+
+---
+
+## Panic conditions
+
+The tables below list every `panic_with_error!` call in the contract source.
+Each row shows the function that raises it, the stable error code (from the
+`VestingError` enum), and the condition that triggers it.
+
+### `create_schedule` / `batch_create_schedule`
+
+| Error code | `VestingError` variant | Triggering condition |
+|:----------:|------------------------|----------------------|
+| 9 | `ContractIsPaused` | Contract is paused (`pause()` was called and `unpause()` was not) |
+| 1 | `AmountMustBePositive` | `params.total_amount <= 0` |
+| 2 | `DurationMustBePositive` | `params.total_duration == 0` |
+| 3 | `CliffExceedsDuration` | `params.cliff_duration > params.total_duration` |
+| 4 | `StartPlusCliffOverflow` | `params.start_time + params.cliff_duration` overflows `u64` |
+| 5 | `StartPlusDurationOverflow` | `params.start_time + params.total_duration` overflows `u64` |
+
+`batch_create_schedule` additionally raises:
+
+| Error code | `VestingError` variant | Triggering condition |
+|:----------:|------------------------|----------------------|
+| 10 | `BatchEmpty` | The `params` vector is empty |
+
+### `claim`
+
+| Error code | `VestingError` variant | Triggering condition |
+|:----------:|------------------------|----------------------|
+| 9 | `ContractIsPaused` | Contract is paused |
+| 6 | `ScheduleNotFound` | No schedule exists with the given `schedule_id` |
+| 7 | `ScheduleNotActive` | Schedule status is `Revoked` or `Completed` |
+| 8 | `NothingToClaim` | `vested_amount(now) - claimed_amount <= 0` |
+
+### `revoke`
+
+| Error code | `VestingError` variant | Triggering condition |
+|:----------:|------------------------|----------------------|
+| 6 | `ScheduleNotFound` | No schedule exists with the given `schedule_id` |
+| 7 | `ScheduleNotActive` | Schedule status is already `Revoked` or `Completed` |
+
+### `transfer_beneficiary`
+
+| Error code | `VestingError` variant | Triggering condition |
+|:----------:|------------------------|----------------------|
+| 9 | `ContractIsPaused` | Contract is paused |
+| 6 | `ScheduleNotFound` | No schedule exists with the given `schedule_id` |
+| 7 | `ScheduleNotActive` | Schedule status is `Revoked` or `Completed` |
+
+### `pause` / `unpause` / `transfer_admin`
+
+These functions panic with a Rust `expect` (not `VestingError`) when the
+contract has not been initialised (i.e., the `ADMIN` storage key is missing):
+
+| Panic message | Function | Triggering condition |
+|---------------|----------|----------------------|
+| `"not initialized"` | `transfer_admin`, `get_admin` | `ADMIN` key absent from instance storage |
+
+Admin-only functions (`pause`, `unpause`, `transfer_admin`, `create_schedule`,
+`revoke`) will also panic if the required authorization is not satisfied
+(`require_auth` failure), which the Soroban host surfaces as an auth error
+rather than a contract-level panic string.
+
+### Read-only getters
+
+| Error code | `VestingError` variant | Function | Triggering condition |
+|:----------:|------------------------|----------|----------------------|
+| 6 | `ScheduleNotFound` | `get_schedule`, `get_claimable`, `get_unvested_amount`, `get_claimed_by_beneficiary` | `schedule_id` does not exist |
