@@ -2329,62 +2329,70 @@ mod tests {
         assert_eq!(token_client.balance(&beneficiary), 100_000);
     }
 
-    // ── Issue #64: minimum viable amount (total_amount = 1) ─────────────────
+    // ── Issue #63: create_schedule with a start_time in the future ───────────
     //
-    // The vesting formula uses integer division:
-    //   vested = elapsed * total_amount / total_duration
-    // With total_amount = 1 and total_duration = 100, the result is 0 for all
-    // elapsed < 100 and 1 only at elapsed >= 100.  This tests that rounding
-    // behaviour is correct and documents the "dust accumulates until end"
-    // property.
+    // vested_amount() uses now.saturating_sub(start_time) for elapsed.
+    // If now < start_time, saturating_sub returns 0 so nothing is claimable.
+    // Once now >= start_time the linear formula applies as normal.
+    //
+    // Schedule: start_time = now + 500, cliff_duration = 0,
+    //           total_duration = 100, total_amount = 1_000
+    //
+    // Expected:
+    //   - At t = start_time - 1: get_claimable() == 0
+    //   - At t = start_time + 50 (50% through): get_claimable() == 500
+    //   - claim() returns 500; beneficiary balance == 500
 
     #[test]
-    fn test_create_schedule_minimum_amount() {
+    fn test_create_schedule_future_start_time() {
         let (env, vesting_id, _admin, beneficiary, funder) = setup();
-        // Mint exactly 1 token.
-        let token = new_token(&env, &funder, 1);
+        let token = new_token(&env, &funder, 1_000);
         let vesting = VestingContractClient::new(&env, &vesting_id);
-        let start = env.ledger().timestamp();
+
+        // current ledger timestamp
+        let now = env.ledger().timestamp();
+        // schedule starts 500 seconds in the future
+        let future_start = now + 500;
 
         let id = vesting.create_schedule(&CreateScheduleParams {
             from: funder.clone(),
             beneficiary: beneficiary.clone(),
             token_address: token.clone(),
-            total_amount: 1,
-            start_time: start,
-            cliff_duration: 0, // no cliff — immediate linear vesting
+            total_amount: 1_000,
+            start_time: future_start,
+            cliff_duration: 0,
             total_duration: 100,
         });
 
-        // At t = start + 50 (midpoint): integer division rounds down.
-        // elapsed(50) * 1 / 100 == 0  →  0 claimable.
-        // This is the documented "dust" behaviour: fractional remainders
-        // accumulate and are only released at elapsed >= total_duration.
-        env.ledger().with_mut(|l| l.timestamp = start + 50);
+        // Before start_time: nothing vested regardless of cliff.
+        // now.saturating_sub(future_start) == 0 and now < future_start + 0,
+        // so vested_amount returns 0.
+        env.ledger().with_mut(|l| l.timestamp = future_start - 1);
         assert_eq!(
             vesting.get_claimable(&id),
             0,
-            "expected 0 claimable at midpoint due to integer-division rounding"
+            "expected 0 claimable one second before start_time"
         );
 
-        // At t = start + 100 (full duration): elapsed >= total_duration branch
-        // returns total_amount directly, so exactly 1 is claimable.
-        env.ledger().with_mut(|l| l.timestamp = start + 100);
+        // At start_time + 50 (50% of total_duration = 100):
+        // elapsed = 50, vested = 50 * 1_000 / 100 = 500
+        env.ledger().with_mut(|l| l.timestamp = future_start + 50);
         assert_eq!(
             vesting.get_claimable(&id),
-            1,
-            "expected exactly 1 claimable at full duration"
+            500,
+            "expected 500 claimable at 50% of schedule after future start_time"
         );
 
-        // Claim and verify the beneficiary receives exactly 1.
+        // claim returns the correct amount
         let claimed = vesting.claim(&id);
-        assert_eq!(claimed, 1, "beneficiary should receive exactly 1 token");
+        assert_eq!(claimed, 500, "claim should transfer 500 tokens");
 
+        // beneficiary balance matches
         let token_client = soroban_sdk::token::Client::new(&env, &token);
         assert_eq!(
             token_client.balance(&beneficiary),
-            1,
-            "beneficiary balance should be exactly 1"
+            500,
+            "beneficiary balance should be 500 after claim"
         );
     }
 
@@ -2488,62 +2496,73 @@ mod tests {
         assert_eq!(vesting.get_claimable(&id), 0);
     }
 
-    // ── Issue #64: minimum viable amount (total_amount = 1) ─────────────────
+    // ── Issue #62: create_schedule when cliff_duration equals total_duration ─
     //
-    // The vesting formula uses integer division:
-    //   vested = elapsed * total_amount / total_duration
-    // With total_amount = 1 and total_duration = 100, the result is 0 for all
-    // elapsed < 100 and 1 only at elapsed >= 100.  This tests that rounding
-    // behaviour is correct and documents the "dust accumulates until end"
-    // property.
+    // When cliff_duration == total_duration the entire period is a cliff —
+    // there is no linear release phase.  The transition from 0 to total_amount
+    // happens in a single ledger step at start_time + total_duration.
+    //
+    // Schedule: cliff_duration = total_duration = 100, total_amount = 1_000
+    //
+    // Expected:
+    //   - At t = start + 99: get_claimable() == 0 (still in cliff)
+    //   - At t = start + 100: get_claimable() == 1_000 (full amount)
+    //   - claim() returns 1_000; schedule transitions to Completed
 
     #[test]
-    fn test_create_schedule_minimum_amount() {
+    fn test_create_schedule_cliff_equals_duration() {
         let (env, vesting_id, _admin, beneficiary, funder) = setup();
-        // Mint exactly 1 token.
-        let token = new_token(&env, &funder, 1);
+        let token = new_token(&env, &funder, 1_000);
         let vesting = VestingContractClient::new(&env, &vesting_id);
         let start = env.ledger().timestamp();
 
+        // cliff_duration == total_duration: the whole period is the cliff
         let id = vesting.create_schedule(&CreateScheduleParams {
             from: funder.clone(),
             beneficiary: beneficiary.clone(),
             token_address: token.clone(),
-            total_amount: 1,
+            total_amount: 1_000,
             start_time: start,
-            cliff_duration: 0, // no cliff — immediate linear vesting
+            cliff_duration: 100,
             total_duration: 100,
         });
 
-        // At t = start + 50 (midpoint): integer division rounds down.
-        // elapsed(50) * 1 / 100 == 0  →  0 claimable.
-        // This is the documented "dust" behaviour: fractional remainders
-        // accumulate and are only released at elapsed >= total_duration.
-        env.ledger().with_mut(|l| l.timestamp = start + 50);
+        // One second before the end: now < start + cliff_duration (100),
+        // so vested_amount returns 0.
+        env.ledger().with_mut(|l| l.timestamp = start + 99);
         assert_eq!(
             vesting.get_claimable(&id),
             0,
-            "expected 0 claimable at midpoint due to integer-division rounding"
+            "expected 0 claimable one second before cliff/total_duration boundary"
         );
 
-        // At t = start + 100 (full duration): elapsed >= total_duration branch
-        // returns total_amount directly, so exactly 1 is claimable.
+        // Exactly at start + total_duration: elapsed >= total_duration branch
+        // returns total_amount directly.
         env.ledger().with_mut(|l| l.timestamp = start + 100);
         assert_eq!(
             vesting.get_claimable(&id),
-            1,
-            "expected exactly 1 claimable at full duration"
+            1_000,
+            "expected full total_amount claimable at start + total_duration"
         );
 
-        // Claim and verify the beneficiary receives exactly 1.
+        // Claim the full amount
         let claimed = vesting.claim(&id);
-        assert_eq!(claimed, 1, "beneficiary should receive exactly 1 token");
+        assert_eq!(claimed, 1_000, "claim should return the full total_amount");
 
+        // Schedule transitions to Completed
+        let sched = vesting.get_schedule(&id);
+        assert_eq!(
+            sched.status,
+            ScheduleStatus::Completed,
+            "schedule should be Completed after full claim"
+        );
+
+        // Beneficiary received all tokens
         let token_client = soroban_sdk::token::Client::new(&env, &token);
         assert_eq!(
             token_client.balance(&beneficiary),
-            1,
-            "beneficiary balance should be exactly 1"
+            1_000,
+            "beneficiary should hold the full total_amount"
         );
     }
 
