@@ -1101,6 +1101,56 @@ mod tests {
         assert_eq!(token.decimals(), 18);
     }
 
+    // ── Issue #66: transfer to self leaves balance and total_supply unchanged ─
+    //
+    // _transfer() reads from_bal, subtracts amount, writes it back, then reads
+    // to_bal, adds amount, writes it back.  When from == to both reads hit the
+    // same storage key — the net result must be no change.
+    //
+    // Setup: mint 1_000 to admin; transfer 100 from admin to admin.
+    // Expected:
+    //   - token.balance(&admin) == 1_000 (unchanged)
+    //   - token.total_supply() == 1_000 (unchanged)
+
+    #[test]
+    fn test_transfer_to_self() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(
+            TokenContract,
+            (
+                admin.clone(),
+                String::from_str(&env, "Vesting Token"),
+                String::from_str(&env, "VEST"),
+                7u32,
+                1_000i128,
+            ),
+        );
+        let token = TokenContractClient::new(&env, &contract_id);
+
+        // Precondition: admin holds all 1_000 minted tokens
+        assert_eq!(token.balance(&admin), 1_000);
+        assert_eq!(token.total_supply(), 1_000);
+
+        // Transfer 100 from admin to admin (self-transfer)
+        token.transfer(&admin, &admin, &100);
+
+        // Balance must be unchanged
+        assert_eq!(
+            token.balance(&admin),
+            1_000,
+            "balance should be unchanged after self-transfer"
+        );
+
+        // Total supply must be unchanged
+        assert_eq!(
+            token.total_supply(),
+            1_000,
+            "total_supply should be unchanged after self-transfer"
+        );
+    }
+
     // ── Overflow guards ───────────────────────────────────────────────────────
 
     /// Minting i128::MAX into a non-zero balance overflows the per-account
