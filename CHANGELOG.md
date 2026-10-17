@@ -9,44 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added — 2026-10-17
 
-- contracts/token/README.md: "Panic conditions" reference table (#92).
-  Consolidates every `panic!` message in `contracts/token/src/lib.rs` into a
-  single table listing function, panic message, and triggering condition.
-  Covers `__constructor` (`"decimals too large"`), `mint` / `burn` /
-  `transfer` / `transfer_from` (`"amount must be positive"`,
-  `"insufficient balance"`, `"allowance exceeded"`, `"token is paused"`),
-  `mint` internal `_mint` helper (`"balance overflow"`,
-  `"total supply overflow"`), `approve` (`"amount cannot be negative"`), and
-  `transfer_admin` / `admin` (`"not initialized"`). Includes a notes block
-  explaining which panics originate in internal helpers.
+- contracts/vesting/README.md: "Panic conditions" reference table (#91).
+  Documents every `panic_with_error!` call in the vesting contract source with
+  the function name, `VestingError` variant, numeric error code, and the
+  condition that triggers it. Covers `create_schedule`,
+  `batch_create_schedule`, `claim`, `revoke`, `transfer_beneficiary`,
+  `pause`/`unpause`/`transfer_admin`, and the read-only getters. Based
+  strictly on the source — no messages were invented. All 10 `VestingError`
+  variants (`AmountMustBePositive`, `DurationMustBePositive`,
+  `CliffExceedsDuration`, `StartPlusCliffOverflow`, `StartPlusDurationOverflow`,
+  `ScheduleNotFound`, `ScheduleNotActive`, `NothingToClaim`,
+  `ContractIsPaused`, `BatchEmpty`) are listed.
 
-### Tests — 2026-10-17
+### Tests — 2026-10-16
 
-- backend/src/routes/multisig.test.js: four new test suites for previously
-  untested endpoints (#77).
-  - `POST /api/multisig/revoke-confirm`: valid body → 202, missing `owner` →
-    400, missing `proposalId` → 400, empty body → 400, response data reflects
-    submitted fields (5 assertions).
-  - `POST /api/multisig/cancel`: valid body → 202, missing fields → 400
-    (existing tests kept; coverage now complete).
-  - `GET /api/multisig/owners`: 200, `data.owners` is an array (existing
-    tests kept; coverage now complete).
-  - `GET /api/multisig/threshold`: 200, `data` has `threshold` property
-    (existing tests kept; coverage now complete).
-
-- contracts/multisig/src/lib.rs: `test_has_confirmed_false_after_revoke_confirmation` (#70).
-  Submits a proposal, confirms as `o1`, asserts `has_confirmed(id, o1) == true`,
-  calls `revoke_confirmation(o1, id)`, asserts `has_confirmed(id, o1) == false`,
-  and asserts `confirmation_count == 0`. Closes the gap identified in #70:
-  existing tests checked `confirmation_count` after revocation but none directly
-  asserted the `has_confirmed` view.
-
-- contracts/multisig/src/lib.rs: `test_proposal_count_increments` (#71).
-  Asserts `proposal_count() == 0` before any submit, then `1`, `2`, `3` after
-  each successive `submit()` call. Makes the PROP_COUNT invariant explicit and
-  guards against regressions if the counter logic is ever changed.
-
-
+- contracts/vesting/src/lib.rs: `test_create_schedule_future_start_time` (#63).
+  Verifies that when `start_time` is set to a future ledger timestamp, nothing
+  is claimable before `start_time` and the correct linear amount is claimable
+  once the ledger advances past `start_time`. Asserts `get_claimable() == 0`
+  at `start_time - 1` and `get_claimable() == 500` (50% of 1 000) at
+  `start_time + 50` with `total_duration = 100`. Calls `claim()` and asserts
+  the beneficiary balance matches. Also fixes a pre-existing duplicate test
+  definition that prevented the vesting test suite from compiling.
 
 - contracts/vesting/src/lib.rs: two new tests for `get_claimable()` on
   terminal schedule statuses (#61).
