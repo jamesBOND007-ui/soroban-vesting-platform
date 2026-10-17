@@ -1608,4 +1608,49 @@ mod tests {
         ms.execute(&id);
         assert_eq!(ms.get_proposal(&id).status, ProposalStatus::Executed);
     }
+
+    // ── Issue #70: has_confirmed() returns false after revoke_confirmation() ─
+
+    /// After an owner calls revoke_confirmation(), has_confirmed() must return
+    /// false for that owner on the affected proposal.  The sequence is:
+    /// submit → confirm → assert true → revoke → assert false.
+    #[test]
+    fn test_has_confirmed_false_after_revoke_confirmation() {
+        let (env, contract_id, o1, _o2, _o3) = setup_2of3();
+        let ms = MultisigContractClient::new(&env, &contract_id);
+        let stub_id = env.register(stub_token::StubToken, ());
+
+        // Submit a proposal.
+        let id = ms.submit(
+            &o1,
+            &call_action(&env, &stub_id, symbol_short!("ping")),
+            &String::from_str(&env, "revoke confirmation test"),
+        );
+
+        // Confirm as o1.
+        ms.confirm(&o1, &id);
+
+        // has_confirmed() must be true before revocation.
+        assert!(
+            ms.has_confirmed(&id, &o1),
+            "has_confirmed should be true after confirm()"
+        );
+
+        // Revoke the confirmation.
+        ms.revoke_confirmation(&o1, &id);
+
+        // has_confirmed() must be false immediately after revocation.
+        assert!(
+            !ms.has_confirmed(&id, &o1),
+            "has_confirmed should be false after revoke_confirmation()"
+        );
+
+        // Verify the confirmation_count also reflects the revocation.
+        assert_eq!(
+            ms.get_proposal(&id).confirmation_count,
+            0,
+            "confirmation_count should be 0 after revocation"
+        );
+    }
+
 }
